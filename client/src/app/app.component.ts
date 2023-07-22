@@ -17,31 +17,35 @@ export class AppComponent implements OnInit {
     term.open(document.getElementById('terminal') as HTMLInputElement);
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    
-    const ws = new WebSocket(`ws://localhost:4200/api/terminal`);
-    
-    ws.addEventListener("open", () => {
-      console.info("WebSocket connected");
+
+    const ws = new WebSocket(`ws://${window.location.host}/api/terminal`);
+
+    ws.addEventListener('open', () => {
       fitAddon.fit();
     });
-    ws.addEventListener("message", (event) => {
+    ws.addEventListener('error', (event) => {
+      console.log('Websocket disconnected with error: %o', event);
+    })
+    ws.addEventListener('close', (event) => {
+      console.log('Websocket disconnected: %o', event);
+    })
+    ws.addEventListener('message', (event) => {
       try {
         term.write(event.data);
       } catch (e) {
         console.error(e);
       }
     });
-    
+
     term.onData((data) => ws.send(JSON.stringify({
       input: btoa(data),
     })));
-    
-    window.addEventListener("resize", () => {
+
+    window.addEventListener('resize', () => {
       fitAddon.fit();
     });
-    
+
     term.onResize((size) => {
-      console.debug("resize");
       const terminal = document.getElementById('terminal');
       ws.send(JSON.stringify({
         cols: size.cols,
