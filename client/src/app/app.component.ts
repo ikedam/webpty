@@ -14,7 +14,13 @@ export class AppComponent implements OnInit {
       rows: 24,
       allowProposedApi: false,
     });
-    term.open(document.getElementById('terminal') as HTMLInputElement);
+    const terminal = document.getElementById('terminal');
+    if (!terminal) {
+      console.log('failed to detect #terminal');
+      return;
+    }
+
+    term.open(terminal);
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
 
@@ -28,18 +34,25 @@ export class AppComponent implements OnInit {
     })
     ws.addEventListener('close', (event) => {
       console.log('Websocket disconnected: %o', event);
+      term.write('\r\n\x1B[31m\x1B[1m[DISCONNECTED]\x1B[0m\r\n');
     })
     ws.addEventListener('message', (event) => {
       try {
         term.write(event.data);
       } catch (e) {
-        console.error(e);
+        console.error('error while writing to xtermjs: %o', e);
       }
     });
 
-    term.onData((data) => ws.send(JSON.stringify({
-      input: btoa(data),
-    })));
+    term.onData((data) => {
+      try {
+        ws.send(JSON.stringify({
+          input: btoa(data),
+        }));
+      } catch (e) {
+        console.error('error while sending to server: %o', e);
+      }
+    });
 
     window.addEventListener('resize', () => {
       fitAddon.fit();
@@ -47,11 +60,15 @@ export class AppComponent implements OnInit {
 
     term.onResize((size) => {
       const terminal = document.getElementById('terminal');
-      ws.send(JSON.stringify({
+      if (!terminal) {
+        console.log('failed to detect #terminal');
+        return;
+      }
+        ws.send(JSON.stringify({
         cols: size.cols,
         rows: size.rows,
-        x: terminal?.clientWidth,
-        y: terminal?.clientHeight,
+        x: terminal.clientWidth,
+        y: terminal.clientHeight,
       }));
     });
   }
