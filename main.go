@@ -4,7 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
+	"os"
 	"os/exec"
+	"sync"
+	"syscall"
 
 	"github.com/creack/pty"
 	"github.com/labstack/echo/v4"
@@ -26,7 +30,7 @@ type commandData struct {
 func doTerminal(c echo.Context) error {
 	c.Logger().Info("new connection")
 	websocket.Handler(func(ws *websocket.Conn) {
-		defer ws.Close()
+		defer func() { _ = ws.Close() }()
 		err := func() error {
 			cmd := exec.Command("bash")
 			ptmx, err := pty.Start(cmd)
@@ -45,14 +49,21 @@ func doTerminal(c echo.Context) error {
 				return err
 			}
 
+			var wg sync.WaitGroup
+
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				for {
 					var buf []byte
 					err := websocket.Message.Receive(ws, &buf)
 					if err != nil {
-						if errors.Is(err, io.EOF) {
-							c.Logger().Info("EOF")
-							cmd.Process.Kill()
+						if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+							c.Logger().Infof("connection client -> server terminated: %+v", err)
+							err := cmd.Process.Signal(syscall.SIGHUP)
+							if err != nil && !errors.Is(err, os.ErrProcessDone) {
+								c.Logger().Errorf("failed to send SIGHUP: %+v", err)
+							}
 							return
 						}
 						c.Logger().Warnf("Error while reading from client: %+v", err)
@@ -71,7 +82,7 @@ func doTerminal(c echo.Context) error {
 						}
 					}
 					if command.PtySize != nil {
-						c.Logger().Info("Change terminal size: %#v", *command.PtySize)
+						c.Logger().Infof("Change terminal size: %#v", *command.PtySize)
 						err = pty.Setsize(ptmx, &pty.Winsize{
 							Cols: uint16(command.PtySize.Cols),
 							Rows: uint16(command.PtySize.Rows),
@@ -84,7 +95,25 @@ func doTerminal(c echo.Context) error {
 					}
 				}
 			}()
-			_, _ = io.Copy(ws, ptmx)
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err = io.Copy(ws, ptmx)
+				c.Logger().Infof("connection server -> client terminated: %+v", err)
+			}()
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				err = cmd.Wait()
+				c.Logger().Infof("bash exited: %+v", err)
+				err := ws.Close()
+				if err != nil {
+					c.Logger().Errorf("failed to disconnect websocket: %+v", err)
+				}
+			}()
+			wg.Wait()
 			return nil
 		}()
 		if err != nil {
