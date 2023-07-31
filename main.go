@@ -33,6 +33,7 @@ func doTerminal(c echo.Context) error {
 		defer func() { _ = ws.Close() }()
 		err := func() error {
 			cmd := exec.Command("bash")
+			cmd.Env = append(cmd.Env, "TERM=xterm")
 			ptmx, err := pty.Start(cmd)
 			if err != nil {
 				return err
